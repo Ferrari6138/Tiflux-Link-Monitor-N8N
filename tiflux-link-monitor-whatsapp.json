@@ -1,0 +1,1004 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [3520, 2752],
+      "id": "0cd15f01-4a90-4ba8-a75f-bd6279a3e8da",
+      "name": "Polling Tickets",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "url": "https://api.tiflux.com/api/v2/tickets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "200"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [3760, 2752],
+      "id": "9f6b16d2-8245-4475-8f80-b1fce9e81265",
+      "name": "Buscar Tickets TiFlux",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "{{TIFLUX_CREDENTIAL_ID}}",
+          "name": "{{TIFLUX_CREDENTIAL_NAME}}"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "filtro-titulo",
+              "leftValue": "={{ $json.title }}",
+              "rightValue": "Link de Internet - Inoperante|Internet Down",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [4000, 2752],
+      "id": "8af88a7c-9805-4bcc-80cb-7f2a079d10bb",
+      "name": "Filtrar Alertas de Link"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Classifica o tipo de alerta e separa clientes por grupo\n// Configure CLIENT_GROUP_REGEX com os nomes dos seus clientes prioritários\nconst CLIENT_GROUP_REGEX = /{{CLIENT_GROUP_REGEX}}/i; // Ex: /ClienteA|ClienteB|ClienteC/i\n\nreturn $input.all().map(item => {\n  const title = item.json.title || '';\n  const clientName = item.json.client?.name || '';\n  \n  let tipo_alerta = 'desconhecido';\n  let grupo_cliente = 'outros';\n  \n  // Classificação do tipo de alerta\n  if (/Link de Internet - Inoperante/i.test(title)) {\n    tipo_alerta = 'link_inoperante';\n  } else if (/Internet Down/i.test(title)) {\n    tipo_alerta = 'internet_down';\n  }\n  \n  // Classificação do grupo de cliente\n  if (CLIENT_GROUP_REGEX.test(clientName)) {\n    grupo_cliente = 'grupo_prioritario';\n  }\n  \n  return {\n    json: {\n      ...item.json,\n      tipo_alerta,\n      grupo_cliente\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4240, 2752],
+      "id": "6f3795fd-7bbf-4896-bc4e-586fe5469faa",
+      "name": "Classificar Tipo e Cliente"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [4464, 2752],
+      "id": "c2514774-7784-4646-8450-145951ec08fb",
+      "name": "Loop Tickets"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determina a tabela correta baseado no tipo de alerta\n// Tabela A = Link Inoperante (clientes do grupo prioritário)\n// Tabela B = Internet Down (demais clientes)\nconst item = $input.first().json;\nconst tipo = item.tipo_alerta;\nconst grupo = item.grupo_cliente;\n\n// Substitua pelos IDs reais das suas tabelas no Baserow\nlet tableId = '{{BASEROW_TABLE_LINK_ID}}';\nlet ticketField = '{{BASEROW_FIELD_TICKET_LINK}}';\n\nif (tipo === 'internet_down') {\n  tableId = '{{BASEROW_TABLE_WAN_ID}}';\n  ticketField = '{{BASEROW_FIELD_TICKET_WAN}}';\n} else if (tipo === 'link_inoperante' && grupo === 'grupo_prioritario') {\n  tableId = '{{BASEROW_TABLE_LINK_ID}}';\n  ticketField = '{{BASEROW_FIELD_TICKET_LINK}}';\n} else {\n  // link_inoperante de clientes fora do grupo prioritário: pular\n  return [{ json: { ...item, _skip: true } }];\n}\n\nreturn [{\n  json: {\n    ...item,\n    _tableId: tableId,\n    _ticketField: ticketField,\n    _skip: false\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4688, 2752],
+      "id": "02bd13e2-ad66-48a4-8022-dcba8509da88",
+      "name": "Resolver Tabela Baserow"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "check-skip",
+              "leftValue": "={{ $json._skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [4912, 2752],
+      "id": "99dec944-4846-4137-9f30-2bd9954995a1",
+      "name": "Deve Processar?"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.tiflux.com/api/v2/tickets/{{ $json.ticket_number }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [5120, 2640],
+      "id": "fb2b7104-a265-4413-99d8-d126e64952f8",
+      "name": "Buscar Detalhes do Ticket",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "{{TIFLUX_CREDENTIAL_ID}}",
+          "name": "{{TIFLUX_CREDENTIAL_NAME}}"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formata dados para notificação via WhatsApp\n// Configure a lista de destinatários abaixo\nconst item = $input.first().json;\nconst parentData = $('Resolver Tabela Baserow').first().json;\nconst tipo = parentData.tipo_alerta;\nconst description = item.description || '';\nconst title = item.title || parentData.title || '';\nconst CLIENT_GROUP_REGEX = /{{CLIENT_GROUP_REGEX}}/i;\n\n// Limpa HTML\nconst text = description.replace(/<[^>]*>?/gm, ' ').replace(/&nbsp;/g, ' ').replace(/\\s+/g, ' ').trim();\n\nlet mensagem = '';\nlet dados = {};\n\nif (tipo === 'link_inoperante') {\n  // === FORMATO ZABBIX ===\n  const hostMatch = text.match(/Host:\\s*(.*?)(?=\\s*Problema)/i);\n  const problemaMatch = text.match(/Problema:\\s*(.*?)(?=\\s*Data:)/i);\n  const dataMatch = text.match(/Data:\\s*([\\d.]+)/i);\n  const horaMatch = text.match(/Hora:\\s*([\\d:]+)/i);\n  const itemMatch = text.match(/Item:\\s*(.*?)(?=\\s*Status)/i);\n  const valorMatch = text.match(/Valor:\\s*(.*?)(?=\\s*IP:|\\s*Severidade:)/i);\n  const severityMatch = text.match(/Severidade:\\s*(.*)/i);\n  \n  dados = {\n    host: hostMatch ? hostMatch[1].trim() : 'N/A',\n    problema: problemaMatch ? problemaMatch[1].trim() : 'N/A',\n    item_monitorado: itemMatch ? itemMatch[1].trim() : 'N/A',\n    data_ocorrencia: dataMatch ? dataMatch[1].trim() : 'N/A',\n    hora_ocorrencia: horaMatch ? horaMatch[1].trim() : 'N/A',\n    valor: valorMatch ? valorMatch[1].trim() : 'N/A',\n    severidade: severityMatch ? severityMatch[1].trim() : 'Disaster'\n  };\n  \n  mensagem = `🚨 *ALERTA DE INCIDENTE - ZABBIX* 🚨\\n\\n` +\n    `🏢 *Empresa:* ${item.client?.name || 'N/A'}\\n` +\n    `🖥️ *Host:* ${dados.host}\\n` +\n    `⚠️ *Problema:* ${dados.problema}\\n` +\n    `🔧 *Item:* ${dados.item_monitorado}\\n` +\n    `📊 *Valor:* ${dados.valor}\\n` +\n    `🔴 *Severidade:* ${dados.severidade}\\n` +\n    `📅 *Data:* ${dados.data_ocorrencia} às ${dados.hora_ocorrencia}\\n` +\n    `🔗 *Ticket:* #${item.ticket_number}`;\n    \n} else if (tipo === 'internet_down') {\n  // === FORMATO UBIQUITI (Email HTML) ===\n  const titleMatch = title.match(/(?:FW:\\s*)?(.+?):\\s*WAN\\d+\\s*Internet Down/i);\n  const deviceMatch = text.match(/Device Name:\\s*(.*?)(?=\\s*Time:)/i);\n  const connectionMatch = text.match(/Internet connection\\s*(.*?)\\s*on port\\s*(\\d+)\\s*is\\s*down/i);\n  const timeMatch = text.match(/Time:\\s*(.*?)(?=\\s*Go To|$)/i);\n  const wanMatch = title.match(/(WAN\\d+)\\s*Internet Down/i);\n  \n  const site = deviceMatch ? deviceMatch[1].trim() : (titleMatch ? titleMatch[1].trim() : 'Site Desconhecido');\n  const wan = wanMatch ? wanMatch[1] : 'WAN';\n  const provedor = connectionMatch ? connectionMatch[1].trim() : wan;\n  const porta = connectionMatch ? connectionMatch[2] : 'N/A';\n  const horario = timeMatch ? timeMatch[1].trim() : new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });\n  \n  dados = { site, wan, provedor, porta, horario };\n  \n  mensagem = `🛰️ *UBIQUITI - ALERTA DE INTERNET DOWN* 🛰️\\n\\n` +\n    `🏢 *Empresa:* ${item.client?.name || 'N/A'}\\n` +\n    `📍 *Site:* ${dados.site}\\n` +\n    `🔌 *Interface:* ${dados.provedor}\\n` +\n    `🔢 *Porta:* ${dados.porta}\\n` +\n    `📉 *Status:* ${dados.wan} DOWN\\n` +\n    `🎫 *Ticket:* #${item.ticket_number}\\n\\n` +\n    `⚡ A conexão ${dados.provedor} caiu. Verifique o link e o equipamento.\\n\\n` +\n    `🕒 *Detectado em:* ${dados.horario}`;\n}\n\nconst clientName = item.client?.name || 'N/A';\n\n// Configure aqui os destinatários do WhatsApp\n// Use o formato internacional sem '+' (ex: 5511999999999)\nconst equipe = [\n  { nome: '{{MEMBER_1_NAME}}', numero: '{{MEMBER_1_WHATSAPP}}' }\n  // Adicione mais membros conforme necessário:\n  // { nome: '{{MEMBER_2_NAME}}', numero: '{{MEMBER_2_WHATSAPP}}' }\n];\n\nreturn equipe.map(d => ({\n  json: {\n    numero: d.numero,\n    nome: d.nome,\n    mensagem,\n    tipo_alerta: tipo,\n    ticket_number: item.ticket_number,\n    client_name: clientName,\n    ...dados\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5360, 2640],
+      "id": "f2076097-f508-4c6d-a2ae-13e6f49726fa",
+      "name": "Formatar Mensagem + Destinatários"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [5600, 2640],
+      "id": "6438998c-bbc1-4868-a9c8-77a6268aea84",
+      "name": "Loop Destinatários"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{UAZAPI_ENDPOINT_URL}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "={{ $json.numero }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.mensagem }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [5840, 2640],
+      "id": "1f3c26c8-b44c-489d-995a-4e07754d84e0",
+      "name": "Enviar Alerta WhatsApp",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [6064, 2640],
+      "id": "629aa3df-6b9a-497f-a155-7bcb76eea42a",
+      "name": "Rate Limit (2s)",
+      "webhookId": "rate-limit-alerta"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Registra ou atualiza no Baserow\nconst parentData = $('Resolver Tabela Baserow').first().json;\nconst tableId = parentData._tableId;\nconst ticketNum = parentData.ticket_number;\nconst clientName = parentData.client?.name || 'N/A';\nconst createdAt = parentData.created_at || '';\n\nreturn [{\n  json: {\n    tableId,\n    ticketNum,\n    clientName,\n    createdAt,\n    tipo_alerta: parentData.tipo_alerta\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5120, 2864],
+      "id": "65076565-c97f-4531-a208-f53cd1b64c2b",
+      "name": "Preparar Dados Baserow"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "check-tipo-534",
+              "leftValue": "={{ $json.tableId }}",
+              "rightValue": "{{BASEROW_TABLE_LINK_ID}}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [5360, 2864],
+      "id": "78eb6d80-c5f8-4daa-9967-ca49f429716a",
+      "name": "Tabela Link ou WAN?"
+    },
+    {
+      "parameters": {
+        "databaseId": "{{BASEROW_DATABASE_ID}}",
+        "tableId": "{{BASEROW_TABLE_LINK_ID}}",
+        "returnAll": true,
+        "additionalOptions": {
+          "filters": {
+            "fields": [
+              {
+                "field": "{{BASEROW_FIELD_TICKET_LINK}}",
+                "value": "={{ $('Preparar Dados Baserow').first().json.ticketNum }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.baserow",
+      "typeVersion": 1,
+      "position": [5600, 2784],
+      "id": "21be2783-f099-4aec-814c-ec0403125385",
+      "name": "Consultar Baserow (Link)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "baserowApi": {
+          "id": "{{BASEROW_CREDENTIAL_ID}}",
+          "name": "{{BASEROW_CREDENTIAL_NAME}}"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "databaseId": "{{BASEROW_DATABASE_ID}}",
+        "tableId": "{{BASEROW_TABLE_WAN_ID}}",
+        "returnAll": true,
+        "additionalOptions": {
+          "filters": {
+            "fields": [
+              {
+                "field": "{{BASEROW_FIELD_TICKET_WAN}}",
+                "value": "={{ $('Preparar Dados Baserow').first().json.ticketNum }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.baserow",
+      "typeVersion": 1,
+      "position": [5600, 2960],
+      "id": "2ab35e45-3a2e-42b2-a5c5-f24acbdcf53d",
+      "name": "Consultar Baserow (WAN)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "baserowApi": {
+          "id": "{{BASEROW_CREDENTIAL_ID}}",
+          "name": "{{BASEROW_CREDENTIAL_NAME}}"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "check-existe-link",
+              "leftValue": "={{ $json.ID_Ticket }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [5840, 2784],
+      "id": "db8e1d2b-4ccc-4a8f-a771-5cba5c6bf864",
+      "name": "Já Existe? (Link)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "check-existe-wan",
+              "leftValue": "={{ $json.ID_Ticket }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [5840, 2960],
+      "id": "4f829385-3313-445a-a09b-b11e1554f761",
+      "name": "Já Existe? (WAN)"
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "databaseId": "{{BASEROW_DATABASE_ID}}",
+        "tableId": "{{BASEROW_TABLE_LINK_ID}}",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "{{BASEROW_FIELD_CLIENT_LINK}}",
+              "fieldValue": "={{ $('Preparar Dados Baserow').first().json.clientName }}"
+            },
+            {
+              "fieldId": "{{BASEROW_FIELD_TICKET_LINK}}",
+              "fieldValue": "={{ $('Preparar Dados Baserow').first().json.ticketNum }}"
+            },
+            {
+              "fieldId": "{{BASEROW_FIELD_CREATED_LINK}}",
+              "fieldValue": "={{ $('Preparar Dados Baserow').first().json.createdAt }}"
+            },
+            {
+              "fieldId": "{{BASEROW_FIELD_STATUS_LINK}}",
+              "fieldValue": "true"
+            },
+            {
+              "fieldId": "{{BASEROW_FIELD_NOTIFIED_LINK}}",
+              "fieldValue": "true"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.baserow",
+      "typeVersion": 1,
+      "position": [6080, 2832],
+      "id": "43c09fab-50f3-4d58-a3f1-8e8c543b8652",
+      "name": "Criar Row (Link)",
+      "credentials": {
+        "baserowApi": {
+          "id": "{{BASEROW_CREDENTIAL_ID}}",
+          "name": "{{BASEROW_CREDENTIAL_NAME}}"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "databaseId": "{{BASEROW_DATABASE_ID}}",
+        "tableId": "{{BASEROW_TABLE_WAN_ID}}",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "{{BASEROW_FIELD_CLIENT_WAN}}",
+              "fieldValue": "={{ $('Preparar Dados Baserow').first().json.clientName }}"
+            },
+            {
+              "fieldId": "{{BASEROW_FIELD_TICKET_WAN}}",
+              "fieldValue": "={{ $('Preparar Dados Baserow').first().json.ticketNum }}"
+            },
+            {
+              "fieldId": "{{BASEROW_FIELD_CREATED_WAN}}",
+              "fieldValue": "={{ $('Preparar Dados Baserow').first().json.createdAt }}"
+            },
+            {
+              "fieldId": "{{BASEROW_FIELD_STATUS_WAN}}",
+              "fieldValue": "true"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.baserow",
+      "typeVersion": 1,
+      "position": [6080, 3008],
+      "id": "fed0e459-ef92-4aac-b470-879bc5e49e15",
+      "name": "Criar Row (WAN)",
+      "credentials": {
+        "baserowApi": {
+          "id": "{{BASEROW_CREDENTIAL_ID}}",
+          "name": "{{BASEROW_CREDENTIAL_NAME}}"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [3520, 3392],
+      "id": "1488d3dd-c21d-449f-8580-d961486529dd",
+      "name": "Verificar Fechamento",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "databaseId": "{{BASEROW_DATABASE_ID}}",
+        "tableId": "{{BASEROW_TABLE_LINK_ID}}",
+        "returnAll": true,
+        "additionalOptions": {
+          "filters": {
+            "fields": [
+              {
+                "field": "{{BASEROW_FIELD_STATUS_LINK}}",
+                "value": "False"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.baserow",
+      "typeVersion": 1,
+      "position": [3808, 3312],
+      "id": "bec6a130-fd1c-454a-b299-11caa387738a",
+      "name": "Tickets Abertos (Link)",
+      "credentials": {
+        "baserowApi": {
+          "id": "{{BASEROW_CREDENTIAL_ID}}",
+          "name": "{{BASEROW_CREDENTIAL_NAME}}"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "databaseId": "{{BASEROW_DATABASE_ID}}",
+        "tableId": "{{BASEROW_TABLE_WAN_ID}}",
+        "returnAll": true,
+        "additionalOptions": {
+          "filters": {
+            "fields": [
+              {
+                "field": "{{BASEROW_FIELD_STATUS_WAN}}",
+                "value": "False"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.baserow",
+      "typeVersion": 1,
+      "position": [3808, 3488],
+      "id": "21762871-b190-4404-9f11-f0d766308298",
+      "name": "Tickets Abertos (WAN)",
+      "credentials": {
+        "baserowApi": {
+          "id": "{{BASEROW_CREDENTIAL_ID}}",
+          "name": "{{BASEROW_CREDENTIAL_NAME}}"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [4080, 3312],
+      "id": "b8d0ae8a-8740-4d8c-92ff-0dd2a241604b",
+      "name": "Loop Verificar (Link)"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [4080, 3488],
+      "id": "4e756207-0b4d-4682-8424-c89a4be64097",
+      "name": "Loop Verificar (WAN)"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.tiflux.com/api/v2/tickets/{{ $json.ID_Ticket }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [4320, 3312],
+      "id": "309b64d3-391b-410c-b8d7-cd3b3377de84",
+      "name": "Verificar Ticket (Link)",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "{{TIFLUX_CREDENTIAL_ID}}",
+          "name": "{{TIFLUX_CREDENTIAL_NAME}}"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.tiflux.com/api/v2/tickets/{{ $json.ID_Ticket }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [4320, 3488],
+      "id": "de7ffcd7-1459-4ee7-ad9d-644e2f391605",
+      "name": "Verificar Ticket (WAN)",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "{{TIFLUX_CREDENTIAL_ID}}",
+          "name": "{{TIFLUX_CREDENTIAL_NAME}}"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "fechado-link",
+              "leftValue": "={{ $json.is_closed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [4560, 3312],
+      "id": "9110e6f7-0e74-44f3-810e-d70e7020f662",
+      "name": "Fechado? (Link)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "fechado-wan",
+              "leftValue": "={{ $json.is_closed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [4560, 3488],
+      "id": "babdaf56-f15a-4dca-9aeb-054ab9cb7d9a",
+      "name": "Fechado? (WAN)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gera mensagem de restabelecimento de Link\nconst item = $input.first().json;\nconst timestamp = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });\n\nconst mensagem = `✅ *MONITORAMENTO: LINK RESTABELECIDO* ✅\\n\\n` +\n  `🏢 *Empresa:* ${item.client?.name || 'N/A'}\\n` +\n  `🎫 *Ticket:* #${item.ticket_number}\\n` +\n  `🌐 *Status:* ONLINE\\n\\n` +\n  `🚀 A conexão foi normalizada. O ticket foi identificado como finalizado no TiFlux.\\n\\n` +\n  `🕒 *Restabelecido em:* ${timestamp}`;\n\nconst clientName = item.client?.name || 'N/A';\n\n// Configure aqui os destinatários do WhatsApp\nconst equipe = [\n  { nome: '{{MEMBER_1_NAME}}', numero: '{{MEMBER_1_WHATSAPP}}' }\n  // { nome: '{{MEMBER_2_NAME}}', numero: '{{MEMBER_2_WHATSAPP}}' }\n];\n\nreturn equipe.map(d => ({\n  json: {\n    numero: d.numero,\n    nome: d.nome,\n    mensagem,\n    ticket_number: item.ticket_number,\n    client_name: clientName\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4800, 3232],
+      "id": "7f4d4ec5-81b4-4dee-bd6c-ea41b76ce530",
+      "name": "Msg Restabelecido (Link)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gera mensagem de restabelecimento Ubiquiti/WAN\nconst item = $input.first().json;\nconst timestamp = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });\nconst title = item.title || '';\n\n// Extrai site do título\nconst titleMatch = title.match(/(?:FW:\\s*)?(.+?):\\s*WAN\\d+/i);\nconst site = titleMatch ? titleMatch[1].trim() : (item.client?.name || 'N/A');\n\nconst mensagem = `✅ *UBIQUITI - INTERNET RESTABELECIDA* ✅\\n\\n` +\n  `🏢 *Empresa:* ${item.client?.name || 'N/A'}\\n` +\n  `📍 *Site:* ${site}\\n` +\n  `🎫 *Ticket:* #${item.ticket_number}\\n` +\n  `🌐 *Status:* O link voltou a operar normalmente.\\n\\n` +\n  `🚀 A conexão foi normalizada e o tráfego não está mais em failover.\\n\\n` +\n  `🕒 *Restabelecido em:* ${timestamp}`;\n\nconst clientName = item.client?.name || 'N/A';\n\n// Configure aqui os destinatários do WhatsApp\nconst equipe = [\n  { nome: '{{MEMBER_1_NAME}}', numero: '{{MEMBER_1_WHATSAPP}}' }\n  // { nome: '{{MEMBER_2_NAME}}', numero: '{{MEMBER_2_WHATSAPP}}' }\n];\n\nreturn equipe.map(d => ({\n  json: {\n    numero: d.numero,\n    nome: d.nome,\n    mensagem,\n    ticket_number: item.ticket_number,\n    client_name: clientName\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4800, 3408],
+      "id": "1fbe33a5-d6c3-4be9-9484-19a9ab0fa0b4",
+      "name": "Msg Restabelecido (WAN)"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [5040, 3232],
+      "id": "60aabd54-5141-4cd0-a9e5-b3921ba171a8",
+      "name": "Loop Notificar (Link)"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [5040, 3408],
+      "id": "19da4f79-2297-4fdc-9274-02c50fe6b14e",
+      "name": "Loop Notificar (WAN)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{UAZAPI_ENDPOINT_URL}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "={{ $json.numero }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.mensagem }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [5280, 3232],
+      "id": "d76da7d9-8988-4e75-aa47-443e08c93c53",
+      "name": "Enviar Restabelecido (Link)",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{UAZAPI_ENDPOINT_URL}}",
+        "sendHeaders": true,
+        "headerParameters": [
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "={{ $json.numero }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.mensagem }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [5280, 3408],
+      "id": "36779260-a85e-4a3c-8edd-164c20c0a8c0",
+      "name": "Enviar Restabelecido (WAN)",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [5520, 3232],
+      "id": "9fb2ec97-142b-46fc-945b-02588ca1b142",
+      "name": "Rate Limit (Link)",
+      "webhookId": "rate-534"
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [5520, 3408],
+      "id": "31de0af5-cb7e-4d36-8737-9aaa132fb473",
+      "name": "Rate Limit (WAN)",
+      "webhookId": "rate-538"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "databaseId": "{{BASEROW_DATABASE_ID}}",
+        "tableId": "{{BASEROW_TABLE_LINK_ID}}",
+        "rowId": "={{ $('Loop Verificar (Link)').item.json.id }}",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "{{BASEROW_FIELD_STATUS_LINK}}",
+              "fieldValue": "true"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.baserow",
+      "typeVersion": 1,
+      "position": [5760, 3232],
+      "id": "7bf80bee-6f44-4b7c-9371-1ee35189bdee",
+      "name": "Marcar LINK Up",
+      "credentials": {
+        "baserowApi": {
+          "id": "{{BASEROW_CREDENTIAL_ID}}",
+          "name": "{{BASEROW_CREDENTIAL_NAME}}"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "databaseId": "{{BASEROW_DATABASE_ID}}",
+        "tableId": "{{BASEROW_TABLE_WAN_ID}}",
+        "rowId": "={{ $('Loop Verificar (WAN)').item.json.id }}",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "{{BASEROW_FIELD_STATUS_WAN}}",
+              "fieldValue": "true"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.baserow",
+      "typeVersion": 1,
+      "position": [5760, 3408],
+      "id": "53dca88c-8e7c-49b2-94fd-1dfac9e7e8d1",
+      "name": "Marcar WAN Up",
+      "credentials": {
+        "baserowApi": {
+          "id": "{{BASEROW_CREDENTIAL_ID}}",
+          "name": "{{BASEROW_CREDENTIAL_NAME}}"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Polling Tickets": {
+      "main": [[{"node": "Buscar Tickets TiFlux", "type": "main", "index": 0}]]
+    },
+    "Buscar Tickets TiFlux": {
+      "main": [[{"node": "Filtrar Alertas de Link", "type": "main", "index": 0}]]
+    },
+    "Filtrar Alertas de Link": {
+      "main": [[{"node": "Classificar Tipo e Cliente", "type": "main", "index": 0}]]
+    },
+    "Classificar Tipo e Cliente": {
+      "main": [[{"node": "Loop Tickets", "type": "main", "index": 0}]]
+    },
+    "Loop Tickets": {
+      "main": [[], [{"node": "Resolver Tabela Baserow", "type": "main", "index": 0}]]
+    },
+    "Resolver Tabela Baserow": {
+      "main": [[{"node": "Deve Processar?", "type": "main", "index": 0}]]
+    },
+    "Deve Processar?": {
+      "main": [
+        [
+          {"node": "Buscar Detalhes do Ticket", "type": "main", "index": 0},
+          {"node": "Preparar Dados Baserow", "type": "main", "index": 0}
+        ],
+        [{"node": "Loop Tickets", "type": "main", "index": 0}]
+      ]
+    },
+    "Buscar Detalhes do Ticket": {
+      "main": [[{"node": "Formatar Mensagem + Destinatários", "type": "main", "index": 0}]]
+    },
+    "Formatar Mensagem + Destinatários": {
+      "main": [[{"node": "Loop Destinatários", "type": "main", "index": 0}]]
+    },
+    "Loop Destinatários": {
+      "main": [[], [{"node": "Enviar Alerta WhatsApp", "type": "main", "index": 0}]]
+    },
+    "Enviar Alerta WhatsApp": {
+      "main": [[{"node": "Rate Limit (2s)", "type": "main", "index": 0}]]
+    },
+    "Rate Limit (2s)": {
+      "main": [[{"node": "Loop Destinatários", "type": "main", "index": 0}]]
+    },
+    "Preparar Dados Baserow": {
+      "main": [[{"node": "Tabela Link ou WAN?", "type": "main", "index": 0}]]
+    },
+    "Tabela Link ou WAN?": {
+      "main": [
+        [{"node": "Consultar Baserow (Link)", "type": "main", "index": 0}],
+        [{"node": "Consultar Baserow (WAN)", "type": "main", "index": 0}]
+      ]
+    },
+    "Consultar Baserow (Link)": {
+      "main": [[{"node": "Já Existe? (Link)", "type": "main", "index": 0}]]
+    },
+    "Consultar Baserow (WAN)": {
+      "main": [[{"node": "Já Existe? (WAN)", "type": "main", "index": 0}]]
+    },
+    "Já Existe? (Link)": {
+      "main": [
+        [{"node": "Loop Tickets", "type": "main", "index": 0}],
+        [{"node": "Criar Row (Link)", "type": "main", "index": 0}]
+      ]
+    },
+    "Já Existe? (WAN)": {
+      "main": [
+        [{"node": "Loop Tickets", "type": "main", "index": 0}],
+        [{"node": "Criar Row (WAN)", "type": "main", "index": 0}]
+      ]
+    },
+    "Criar Row (Link)": {
+      "main": [[{"node": "Loop Tickets", "type": "main", "index": 0}]]
+    },
+    "Criar Row (WAN)": {
+      "main": [[{"node": "Loop Tickets", "type": "main", "index": 0}]]
+    },
+    "Verificar Fechamento": {
+      "main": [[
+        {"node": "Tickets Abertos (Link)", "type": "main", "index": 0},
+        {"node": "Tickets Abertos (WAN)", "type": "main", "index": 0}
+      ]]
+    },
+    "Tickets Abertos (Link)": {
+      "main": [[{"node": "Loop Verificar (Link)", "type": "main", "index": 0}]]
+    },
+    "Tickets Abertos (WAN)": {
+      "main": [[{"node": "Loop Verificar (WAN)", "type": "main", "index": 0}]]
+    },
+    "Loop Verificar (Link)": {
+      "main": [[], [{"node": "Verificar Ticket (Link)", "type": "main", "index": 0}]]
+    },
+    "Loop Verificar (WAN)": {
+      "main": [[], [{"node": "Verificar Ticket (WAN)", "type": "main", "index": 0}]]
+    },
+    "Verificar Ticket (Link)": {
+      "main": [[{"node": "Fechado? (Link)", "type": "main", "index": 0}]]
+    },
+    "Verificar Ticket (WAN)": {
+      "main": [[{"node": "Fechado? (WAN)", "type": "main", "index": 0}]]
+    },
+    "Fechado? (Link)": {
+      "main": [
+        [{"node": "Msg Restabelecido (Link)", "type": "main", "index": 0}],
+        [{"node": "Loop Verificar (Link)", "type": "main", "index": 0}]
+      ]
+    },
+    "Fechado? (WAN)": {
+      "main": [
+        [{"node": "Msg Restabelecido (WAN)", "type": "main", "index": 0}],
+        [{"node": "Loop Verificar (WAN)", "type": "main", "index": 0}]
+      ]
+    },
+    "Msg Restabelecido (Link)": {
+      "main": [[{"node": "Loop Notificar (Link)", "type": "main", "index": 0}]]
+    },
+    "Msg Restabelecido (WAN)": {
+      "main": [[{"node": "Loop Notificar (WAN)", "type": "main", "index": 0}]]
+    },
+    "Loop Notificar (Link)": {
+      "main": [
+        [{"node": "Marcar LINK Up", "type": "main", "index": 0}],
+        [{"node": "Enviar Restabelecido (Link)", "type": "main", "index": 0}]
+      ]
+    },
+    "Loop Notificar (WAN)": {
+      "main": [
+        [{"node": "Marcar WAN Up", "type": "main", "index": 0}],
+        [{"node": "Enviar Restabelecido (WAN)", "type": "main", "index": 0}]
+      ]
+    },
+    "Enviar Restabelecido (Link)": {
+      "main": [[{"node": "Rate Limit (Link)", "type": "main", "index": 0}]]
+    },
+    "Enviar Restabelecido (WAN)": {
+      "main": [[{"node": "Rate Limit (WAN)", "type": "main", "index": 0}]]
+    },
+    "Rate Limit (Link)": {
+      "main": [[{"node": "Loop Notificar (Link)", "type": "main", "index": 0}]]
+    },
+    "Rate Limit (WAN)": {
+      "main": [[{"node": "Loop Notificar (WAN)", "type": "main", "index": 0}]]
+    },
+    "Marcar LINK Up": {
+      "main": [[{"node": "Loop Verificar (Link)", "type": "main", "index": 0}]]
+    },
+    "Marcar WAN Up": {
+      "main": [[{"node": "Loop Verificar (WAN)", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "{{N8N_INSTANCE_ID}}"
+  }
+}
